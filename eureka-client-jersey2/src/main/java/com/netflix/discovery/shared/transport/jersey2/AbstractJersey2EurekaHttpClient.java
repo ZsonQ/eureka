@@ -81,6 +81,11 @@ public abstract class AbstractJersey2EurekaHttpClient implements EurekaHttpClien
         this.password = localPassword;
     }
 
+    /**
+     * 封装服务注册请求
+     * @param info
+     * @return
+     */
     @Override
     public EurekaHttpResponse<Void> register(InstanceInfo info) {
         String urlPath = "apps/" + info.getAppName();
@@ -125,6 +130,14 @@ public abstract class AbstractJersey2EurekaHttpClient implements EurekaHttpClien
         }
     }
 
+    /**
+     * 发送心跳续约请求
+     * @param appName
+     * @param id
+     * @param info
+     * @param overriddenStatus
+     * @return
+     */
     @Override
     public EurekaHttpResponse<InstanceInfo> sendHeartBeat(String appName, String id, InstanceInfo info, InstanceStatus overriddenStatus) {
         String urlPath = "apps/" + appName + '/' + id;
@@ -249,6 +262,13 @@ public abstract class AbstractJersey2EurekaHttpClient implements EurekaHttpClien
         }
     }
 
+    /**
+     * 全量拉取
+     *
+     * @param urlPath
+     * @param regions
+     * @return
+     */
     private EurekaHttpResponse<Applications> getApplicationsInternal(String urlPath, String[] regions) {
         Response response = null;
         try {
@@ -263,6 +283,7 @@ public abstract class AbstractJersey2EurekaHttpClient implements EurekaHttpClien
 
             Applications applications = null;
             if (response.getStatus() == Status.OK.getStatusCode() && response.hasEntity()) {
+                // 缓存服务实例信息
                 applications = response.readEntity(Applications.class);
             }
             return anEurekaHttpResponse(response.getStatus(), applications).headers(headersOf(response)).build();

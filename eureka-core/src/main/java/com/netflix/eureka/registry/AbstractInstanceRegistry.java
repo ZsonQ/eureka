@@ -86,13 +86,18 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             .<String, InstanceStatus>build().asMap();
 
     // CircularQueues here for debugging/statistics purposes only
+    // 维护最近注册的队列 大小：1000
     private final CircularQueue<Pair<Long, String>> recentRegisteredQueue;
+    // 维护最近取消的队列 大小：1000
     private final CircularQueue<Pair<Long, String>> recentCanceledQueue;
+    // 维护最近改变的队列
     private ConcurrentLinkedQueue<RecentlyChangedItem> recentlyChangedQueue = new ConcurrentLinkedQueue<RecentlyChangedItem>();
 
+    // 读写锁
     private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
     private final Lock read = readWriteLock.readLock();
     private final Lock write = readWriteLock.writeLock();
+    // 自我同步机制的锁
     protected final Object lock = new Object();
 
     private Timer deltaRetentionTimer = new Timer("Eureka-DeltaRetentionTimer", true);
@@ -189,54 +194,82 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * Registers a new instance with a given duration.
      *
      * @see com.netflix.eureka.lease.LeaseManager#register(java.lang.Object, int, boolean)
+     *
+     * 服务注册
+     *
      */
     public void register(InstanceInfo registrant, int leaseDuration, boolean isReplication) {
+        // 加读锁
         read.lock();
         try {
+            // 获取本地该服务名称的集群
             Map<String, Lease<InstanceInfo>> gMap = registry.get(registrant.getAppName());
+            // 计算注册实例个数
             REGISTER.increment(isReplication);
+            // 存在服务实例
             if (gMap == null) {
+                //没有就创建一个map保存服务实例
+                //为什么是一个map，因为一个服务名称下可以有多个服务实例
                 final ConcurrentHashMap<String, Lease<InstanceInfo>> gNewMap = new ConcurrentHashMap<String, Lease<InstanceInfo>>();
+                //如果存在的话将添加到registry 本地缓存中，维护最新的服务实例
                 gMap = registry.putIfAbsent(registrant.getAppName(), gNewMap);
                 if (gMap == null) {
                     gMap = gNewMap;
                 }
             }
+            // 获取该服务实例的租债器
+            // 租债器保存了服务实例信息和下架，注册，续约的操作时间
             Lease<InstanceInfo> existingLease = gMap.get(registrant.getId());
             // Retain the last dirty timestamp without overwriting it, if there is already a lease
+            // 是否存在租债器 维护最新的服务实例registrant
             if (existingLease != null && (existingLease.getHolder() != null)) {
+                // 存在====判断是否并发注册 缓存更新注册时间的服务实例
+                // 获取缓存中存在的实例最后注册时间
                 Long existingLastDirtyTimestamp = existingLease.getHolder().getLastDirtyTimestamp();
+                // 获取注册的这个服务 注册的时间
                 Long registrationLastDirtyTimestamp = registrant.getLastDirtyTimestamp();
                 logger.debug("Existing lease found (existing={}, provided={}", existingLastDirtyTimestamp, registrationLastDirtyTimestamp);
 
                 // this is a > instead of a >= because if the timestamps are equal, we still take the remote transmitted
                 // InstanceInfo instead of the server local copy.
+                // 如果缓存中已经注册的实例服务注册时间 > 现在这个服务注册的时间
                 if (existingLastDirtyTimestamp > registrationLastDirtyTimestamp) {
                     logger.warn("There is an existing lease and the existing lease's dirty timestamp {} is greater" +
                             " than the one that is being registered {}", existingLastDirtyTimestamp, registrationLastDirtyTimestamp);
                     logger.warn("Using the existing instanceInfo instead of the new instanceInfo as the registrant");
+                    // 使用缓存的注册服务实例
                     registrant = existingLease.getHolder();
                 }
             } else {
                 // The lease does not exist and hence it is a new registration
+                // 使用现在注册服务的实例registrant注册时间
+                // 加锁
                 synchronized (lock) {
                     if (this.expectedNumberOfClientsSendingRenews > 0) {
                         // Since the client wants to register it, increase the number of clients sending renews
+                        //由于客户端想要注册它，增加发送更新的客户端数量
                         this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews + 1;
+                        // 重新计算自我保护机制
                         updateRenewsPerMinThreshold();
                     }
                 }
                 logger.debug("No previous lease information found; it is new registration");
             }
+            // 将最新的服务实例registrant封装为一个租债器lease
             Lease<InstanceInfo> lease = new Lease<InstanceInfo>(registrant, leaseDuration);
             if (existingLease != null) {
+                // 如果缓存之前注册了该实例的情况下，更新租债器里面服务注册的时间
                 lease.setServiceUpTimestamp(existingLease.getServiceUpTimestamp());
             }
+            // 保存服务实例到缓存
             gMap.put(registrant.getId(), lease);
+
+            // 最近的注册服务队列
             recentRegisteredQueue.add(new Pair<Long, String>(
                     System.currentTimeMillis(),
                     registrant.getAppName() + "(" + registrant.getId() + ")"));
             // This is where the initial state transfer of overridden status happens
+            // 记录没有服务注册过的服务状态
             if (!InstanceStatus.UNKNOWN.equals(registrant.getOverriddenStatus())) {
                 logger.debug("Found overridden status {} for instance {}. Checking to see if needs to be add to the "
                                 + "overrides", registrant.getOverriddenStatus(), registrant.getId());
@@ -245,6 +278,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                     overriddenInstanceStatusMap.put(registrant.getId(), registrant.getOverriddenStatus());
                 }
             }
+            // 修改服务状态
             InstanceStatus overriddenStatusFromMap = overriddenInstanceStatusMap.get(registrant.getId());
             if (overriddenStatusFromMap != null) {
                 logger.info("Storing overridden status {} from map", overriddenStatusFromMap);
@@ -252,16 +286,25 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             }
 
             // Set the status based on the overridden status rules
+            // 根据覆盖的状态规则设置状态
             InstanceStatus overriddenInstanceStatus = getOverriddenInstanceStatus(registrant, existingLease, isReplication);
             registrant.setStatusWithoutDirty(overriddenInstanceStatus);
 
             // If the lease is registered with UP status, set lease service up timestamp
+            // 如果租约以UP状态注册，则设置租约服务启动时间戳
             if (InstanceStatus.UP.equals(registrant.getStatus())) {
                 lease.serviceUp();
             }
+
+            // 记录操作类型
             registrant.setActionType(ActionType.ADDED);
+            // 维护15分钟之内最新注册的服务实例，用来后面客户端增量拉取服务信息时会使用该queue来获取修改的服务实例信息
+            // 每30s一次定时删除修改时间超过15分钟外的服务实例
+            // 最近改变的队列
             recentlyChangedQueue.add(new RecentlyChangedItem(lease));
+            // 在状态更新时设置此实例的更新时间。
             registrant.setLastUpdatedTimestamp();
+            // 失效缓存
             invalidateCache(registrant.getAppName(), registrant.getVIPAddress(), registrant.getSecureVipAddress());
             logger.info("Registered instance {}/{} with status {} (replication={})",
                     registrant.getAppName(), registrant.getId(), registrant.getStatus(), isReplication);
@@ -283,6 +326,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * @param isReplication true if this is a replication event from other nodes, false
      *                      otherwise.
      * @return true if the instance was removed from the {@link AbstractInstanceRegistry} successfully, false otherwise.
+     *
+     * 服务下架
      */
     @Override
     public boolean cancel(String appName, String id, boolean isReplication) {
@@ -293,16 +338,24 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * {@link #cancel(String, String, boolean)} method is overridden by {@link PeerAwareInstanceRegistry}, so each
      * cancel request is replicated to the peers. This is however not desired for expires which would be counted
      * in the remote peers as valid cancellations, so self preservation mode would not kick-in.
+     *
+     * 服务下架
+     *
      */
     protected boolean internalCancel(String appName, String id, boolean isReplication) {
+        // 读锁
         read.lock();
         try {
+            // 记录下架操作实例数量
             CANCEL.increment(isReplication);
+            // 获取服务map
             Map<String, Lease<InstanceInfo>> gMap = registry.get(appName);
             Lease<InstanceInfo> leaseToCancel = null;
             if (gMap != null) {
+                // 获取下架服务的租债器
                 leaseToCancel = gMap.remove(id);
             }
+            // 维护最近的下架服务实例queue
             recentCanceledQueue.add(new Pair<Long, String>(System.currentTimeMillis(), appName + "(" + id + ")"));
             InstanceStatus instanceStatus = overriddenInstanceStatusMap.remove(id);
             if (instanceStatus != null) {
@@ -313,17 +366,22 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 logger.warn("DS: Registry: cancel failed because Lease is not registered for: {}/{}", appName, id);
                 return false;
             } else {
+                // 开始下架服务 更新过期时间取消租约。
                 leaseToCancel.cancel();
                 InstanceInfo instanceInfo = leaseToCancel.getHolder();
                 String vip = null;
                 String svip = null;
                 if (instanceInfo != null) {
                     instanceInfo.setActionType(ActionType.DELETED);
+                    // 维护最近改变的服务实例队列
                     recentlyChangedQueue.add(new RecentlyChangedItem(leaseToCancel));
+                    // 记录服务最后操作时间
                     instanceInfo.setLastUpdatedTimestamp();
                     vip = instanceInfo.getVIPAddress();
                     svip = instanceInfo.getSecureVipAddress();
                 }
+                // 删除该下架服务实例的缓存
+                // 只会删除读写缓存  只读缓存不用删除，自己会30s去同步读写缓存
                 invalidateCache(appName, vip, svip);
                 logger.info("Cancelled instance {}/{} (replication={})", appName, id, isReplication);
             }
@@ -332,6 +390,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         }
 
         synchronized (lock) {
+            // 重新计算自我保护机制
             if (this.expectedNumberOfClientsSendingRenews > 0) {
                 // Since the client wants to cancel it, reduce the number of clients to send renews.
                 this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews - 1;
@@ -345,24 +404,31 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     /**
      * Marks the given instance of the given app name as renewed, and also marks whether it originated from
      * replication.
-     *
      * @see com.netflix.eureka.lease.LeaseManager#renew(java.lang.String, java.lang.String, boolean)
+     *
+     * 心跳续约
+     *
      */
     public boolean renew(String appName, String id, boolean isReplication) {
         RENEW.increment(isReplication);
+        // 获取服务实例map
         Map<String, Lease<InstanceInfo>> gMap = registry.get(appName);
         Lease<InstanceInfo> leaseToRenew = null;
         if (gMap != null) {
+            // 获取该服务的租债器
             leaseToRenew = gMap.get(id);
         }
         if (leaseToRenew == null) {
+            // 没有找到服务的租债器 表示过期-下架-剔除-没有注册成功
             RENEW_NOT_FOUND.increment(isReplication);
             logger.warn("DS: Registry: lease doesn't exist, registering resource: {} - {}", appName, id);
             return false;
         } else {
+            // 根据租债器获取实例信息
             InstanceInfo instanceInfo = leaseToRenew.getHolder();
             if (instanceInfo != null) {
                 // touchASGCache(instanceInfo.getASGName());
+                // 修改服务状态 如果服务不合法则心跳检测失败 保持服务的状态为UP
                 InstanceStatus overriddenInstanceStatus = this.getOverriddenInstanceStatus(
                         instanceInfo, leaseToRenew, isReplication);
                 if (overriddenInstanceStatus == InstanceStatus.UNKNOWN) {
@@ -382,6 +448,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 }
             }
             renewsLastMin.increment();
+            // 重新计算服务过期时间
             leaseToRenew.renew();
             return true;
         }
@@ -575,17 +642,25 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
     /**
      * Evicts everything in the instance registry that has expired, if expiry is enabled.
-     *
      * @see com.netflix.eureka.lease.LeaseManager#evict()
+     *
+     * 如果启用了到期，则收回实例注册表中已过期的所有内容。
+     *
+     * 服务剔除
      */
     @Override
     public void evict() {
         evict(0l);
     }
 
+    /**
+     * 服务剔除
+     * @param additionalLeaseMs
+     */
     public void evict(long additionalLeaseMs) {
         logger.debug("Running the evict task");
 
+        // 是否开启了自我保护机制 默认开启
         if (!isLeaseExpirationEnabled()) {
             logger.debug("DS: lease expiration is currently disabled.");
             return;
@@ -594,12 +669,15 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         // We collect first all expired items, to evict them in random order. For large eviction sets,
         // if we do not that, we might wipe out whole apps before self preservation kicks in. By randomizing it,
         // the impact should be evenly distributed across all applications.
+        // 计算服务到期需要剔除的服务实例个数 expiredLeases保存
         List<Lease<InstanceInfo>> expiredLeases = new ArrayList<>();
+        //双层遍历本地缓存registry 获取服务实例信息
         for (Entry<String, Map<String, Lease<InstanceInfo>>> groupEntry : registry.entrySet()) {
             Map<String, Lease<InstanceInfo>> leaseMap = groupEntry.getValue();
             if (leaseMap != null) {
                 for (Entry<String, Lease<InstanceInfo>> leaseEntry : leaseMap.entrySet()) {
                     Lease<InstanceInfo> lease = leaseEntry.getValue();
+                    // lease.isExpired() 判断服务是否过期
                     if (lease.isExpired(additionalLeaseMs) && lease.getHolder() != null) {
                         expiredLeases.add(lease);
                     }
@@ -609,10 +687,16 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
         // To compensate for GC pauses or drifting local time, we need to use current registry size as a base for
         // triggering self-preservation. Without that we would wipe out full registry.
+        // 获取本地服务注册的总数
         int registrySize = (int) getLocalRegistrySize();
+        // 计算最大不需要剔除的额服务总数 registrySizeThreshold = 本地服务总数 * 85%;
         int registrySizeThreshold = (int) (registrySize * serverConfig.getRenewalPercentThreshold());
+        // 计算最大需要剔除的服务总数 evictionLimit = 本地服务总数 - 计算不需要剔除的额服务总数;
         int evictionLimit = registrySize - registrySizeThreshold;
 
+        // 计算真实需要剔除服务数量 = 取出最大需要剔除的服务总数和实际服务到期需要剔除的服务实例个数最小值
+        // 如果最大需要剔除的服务总数 > 实际服务到期需要剔除的服务实例个数: 表示需要剔除的服务实例没有达到最大能够剔除的服务数量，取后者
+        // 如果最大需要剔除的服务总数 < 实际服务到期需要剔除的服务实例个数: 表示需要剔除的服务实例超过最大能够剔除的服务数量，取前者
         int toEvict = Math.min(expiredLeases.size(), evictionLimit);
         if (toEvict > 0) {
             logger.info("Evicting {} items (expired={}, evictionLimit={})", toEvict, expiredLeases.size(), evictionLimit);
@@ -620,6 +704,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             Random random = new Random(System.currentTimeMillis());
             for (int i = 0; i < toEvict; i++) {
                 // Pick a random item (Knuth shuffle algorithm)
+                // 使用洗牌随机算法来保证随机删除服务实例
                 int next = i + random.nextInt(expiredLeases.size() - i);
                 Collections.swap(expiredLeases, i, next);
                 Lease<InstanceInfo> lease = expiredLeases.get(i);
@@ -628,6 +713,9 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 String id = lease.getHolder().getId();
                 EXPIRED.increment();
                 logger.warn("DS: Registry: expired lease for {}/{}", appName, id);
+                // 调用服务下架接口下架服务实例
+                // 服务剔除不需要集群同步
+                // 因为其他集群server节点也会自动剔除过期服务
                 internalCancel(appName, id, false);
             }
         }
@@ -657,6 +745,10 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      *                            as indicated by the region {@link URL} by this property
      *                            {@link EurekaServerConfig#getRemoteRegionUrls()}, false otherwise
      * @return the application
+     *
+     *
+     * 全量拉取
+     *
      */
     @Override
     public Application getApplication(String appName, boolean includeRemoteRegion) {
@@ -731,6 +823,9 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      *
      * @return The applications with instances from the passed remote regions as well as local region. The instances
      * from remote regions can be only for certain whitelisted apps as explained above.
+     *
+     * 多区域全量拉取
+     *
      */
     public Applications getApplicationsFromMultipleRegions(String[] remoteRegions) {
 
@@ -867,6 +962,11 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * @deprecated use {@link #getApplicationDeltasFromMultipleRegions(String[])} instead. This method has a
      * flawed behavior of transparently falling back to a remote region if no instances for an app is available locally.
      * The new behavior is to explicitly specify if you need a remote region.
+     *
+     * 增量拉取
+     *
+     * 从最近改变获取服务列表  从recentlyChangedQueue获取
+     *
      */
     @Deprecated
     public Applications getApplicationDeltas() {
@@ -937,6 +1037,11 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      * @return The delta with instances from the passed remote regions as well as local region. The instances
      * from remote regions can be further be restricted as explained above. <code>null</code> if the application does
      * not exist locally or in remote regions.
+     *
+     * 增量拉取
+     *
+     * 从最近改变获取服务列表  从recentlyChangedQueue获取
+     *
      */
     public Applications getApplicationDeltasFromMultipleRegions(String[] remoteRegions) {
         if (null == remoteRegions) {
@@ -997,6 +1102,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             }
 
             Applications allApps = getApplicationsFromMultipleRegions(remoteRegions);
+            // 设置服务器本地缓存服务列表的hashcode
+            // 用来增量拉取是进行是否拉取成功的校验
             apps.setAppsHashCode(allApps.getReconcileHashCode());
             return apps;
         } finally {
@@ -1180,11 +1287,20 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         return list;
     }
 
+    /**
+     * 失效缓存 读写缓存
+     * @param appName
+     * @param vipAddress
+     * @param secureVipAddress
+     */
     private void invalidateCache(String appName, @Nullable String vipAddress, @Nullable String secureVipAddress) {
         // invalidate cache
         responseCache.invalidate(appName, vipAddress, secureVipAddress);
     }
 
+    /**
+     * 计算自我保护机制
+     */
     protected void updateRenewsPerMinThreshold() {
         this.numberOfRenewsPerMinThreshold = (int) (this.expectedNumberOfClientsSendingRenews
                 * (60.0 / serverConfig.getExpectedClientRenewalIntervalSeconds())
@@ -1222,6 +1338,9 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
     /**
      * Perform all cleanup and shutdown operations.
+     *
+     * 服务销毁
+     *
      */
     @Override
     public void shutdown() {
@@ -1337,6 +1456,13 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         return rule.apply(r, existingLease, isReplication).status();
     }
 
+    /**
+     * 每30s 进行一次刷新，删除缓存时间超过3分钟的值
+     *
+     * 用来增量拉取时使用
+     *
+     * @return
+     */
     private TimerTask getDeltaRetentionTask() {
         return new TimerTask() {
 

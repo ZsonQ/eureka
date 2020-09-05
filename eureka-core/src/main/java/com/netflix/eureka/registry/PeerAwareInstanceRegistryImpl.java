@@ -117,6 +117,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
     private final MeasuredRate numberOfReplicationsLastMin;
 
     protected final EurekaClient eurekaClient;
+
+    //集群server地址
     protected volatile PeerEurekaNodes peerEurekaNodes;
 
     private final InstanceStatusOverrideRule instanceStatusOverrideRule;
@@ -187,6 +189,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      * dramatically because of network partition and to protect expiring too
      * many instances at a time.
      *
+     * 计划更新阈值更新任务
+     *
      */
     private void scheduleRenewalThresholdUpdateTask() {
         timer.schedule(new TimerTask() {
@@ -202,6 +206,11 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      * Populates the registry information from a peer eureka node. This
      * operation fails over to other nodes until the list is exhausted if the
      * communication fails.
+     *
+     * 启动时 全量拉取
+     *
+     * 启动全量拉取同步服务注册信息
+     *
      */
     @Override
     public int syncUp() {
@@ -217,11 +226,13 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     break;
                 }
             }
+            // 获取本地缓存注册服务实例
             Applications apps = eurekaClient.getApplications();
             for (Application app : apps.getRegisteredApplications()) {
                 for (InstanceInfo instance : app.getInstances()) {
                     try {
                         if (isRegisterable(instance)) {
+                            // 集群同步注册
                             register(instance, instance.getLeaseInfo().getDurationInSecs(), true);
                             count++;
                         }
@@ -234,10 +245,18 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
         return count;
     }
 
+    /**
+     *
+     * @param applicationInfoManager
+     * @param count
+     */
     @Override
     public void openForTraffic(ApplicationInfoManager applicationInfoManager, int count) {
         // Renewals happen every 30 seconds and for a minute it should be a factor of 2.
+        // 每30秒更新一次，一分钟内更新次数应该是2
+        // 计算注册的服务实例个数
         this.expectedNumberOfClientsSendingRenews = count;
+        // 重新计算自我保护机制
         updateRenewsPerMinThreshold();
         logger.info("Got {} instances from neighboring DS node", count);
         logger.info("Renew threshold is: {}", numberOfRenewsPerMinThreshold);
@@ -249,6 +268,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
         boolean isAws = Name.Amazon == selfName;
         if (isAws && serverConfig.shouldPrimeAwsReplicaConnections()) {
             logger.info("Priming AWS connections for all replicas..");
+            // 为所有副本启动AWS连接。
+            // 通过备份服务器获取集群信息
             primeAwsReplicas(applicationInfoManager);
         }
         logger.info("Changing status to UP");
@@ -272,6 +293,9 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      * able to ping all eureka nodes successfully atleast once. Until then we
      * won't open up the traffic.
      * </p>
+     *
+     * 备份服务器server 连接获取集群信息
+     * 如果当主server不能连接时会使用备份服务器获取
      */
     private void primeAwsReplicas(ApplicationInfoManager applicationInfoManager) {
         boolean areAllPeerNodesPrimed = false;
@@ -288,6 +312,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     for (InstanceInfo peerInstanceInfo : eurekaApps.getInstances()) {
                         LeaseInfo leaseInfo = peerInstanceInfo.getLeaseInfo();
                         // If the lease is expired - do not worry about priming
+                        // 如果租约到期-不要担心启动
                         if (System.currentTimeMillis() > (leaseInfo
                                 .getRenewalTimestamp() + (leaseInfo
                                 .getDurationInSecs() * 1000))
@@ -376,6 +401,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
     public boolean cancel(final String appName, final String id,
                           final boolean isReplication) {
         if (super.cancel(appName, id, isReplication)) {
+            //服务下架的集群同步操作
             replicateToPeers(Action.Cancel, appName, id, null, null, isReplication);
 
             return true;
@@ -392,15 +418,22 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      *            the {@link InstanceInfo} to be registered and replicated.
      * @param isReplication
      *            true if this is a replication event from other replica nodes,
-     *            false otherwise.
+     *            false otherwise.、
+     *
+     *  服务注册
+     *
      */
     @Override
     public void register(final InstanceInfo info, final boolean isReplication) {
+        // 获取服务过期时间 默认 90s
         int leaseDuration = Lease.DEFAULT_DURATION_IN_SECS;
         if (info.getLeaseInfo() != null && info.getLeaseInfo().getDurationInSecs() > 0) {
             leaseDuration = info.getLeaseInfo().getDurationInSecs();
         }
+        // 调用父类 AbstractInstanceRegistry 接口开始注册实例
         super.register(info, leaseDuration, isReplication);
+        // 开始同步集群
+        // 获取本地注册缓存，依次发送请求同步
         replicateToPeers(Action.Register, info.getAppName(), info.getId(), info, null, isReplication);
     }
 
@@ -412,6 +445,7 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      */
     public boolean renew(final String appName, final String id, final boolean isReplication) {
         if (super.renew(appName, id, isReplication)) {
+            // 心跳续约的集群同步操作
             replicateToPeers(Action.Heartbeat, appName, id, null, null, isReplication);
             return true;
         }
@@ -607,6 +641,11 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      * Replicates all eureka actions to peer eureka nodes except for replication
      * traffic to this node.
      *
+     * 运行时同步
+     * 服务集群同步操作
+     *
+     * 各种类型的同步: 服务注册、服务下架、心跳续约、状态修改
+     *
      */
     private void replicateToPeers(Action action, String appName, String id,
                                   InstanceInfo info /* optional */,
@@ -614,18 +653,23 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
         Stopwatch tracer = action.getTimer().start();
         try {
             if (isReplication) {
+                // 记录一分钟心跳连接数 计算集群服务正常实例
                 numberOfReplicationsLastMin.increment();
             }
             // If it is a replication already, do not replicate again as this will create a poison replication
             if (peerEurekaNodes == Collections.EMPTY_LIST || isReplication) {
+                //如果没有集群或者时集群同步注册的请求 不需要同步
                 return;
             }
 
+            //存在多个server地址
             for (final PeerEurekaNode node : peerEurekaNodes.getPeerEurekaNodes()) {
                 // If the url represents this host, do not replicate to yourself.
+                // 如果是同一个服务server不需要同步
                 if (peerEurekaNodes.isThisMyUrl(node.getServiceUrl())) {
                     continue;
                 }
+                //开始同步
                 replicateInstanceActionsToPeers(action, appName, id, info, newStatus, node);
             }
         } finally {
@@ -637,6 +681,11 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
      * Replicates all instance changes to peer eureka nodes except for
      * replication traffic to this node.
      *
+     * 运行时
+     * 集群同步 判断需要请求的类型
+     *
+     * 使用一个Task去发送同步请求
+     *
      */
     private void replicateInstanceActionsToPeers(Action action, String appName,
                                                  String id, InstanceInfo info, InstanceStatus newStatus,
@@ -645,18 +694,18 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
             InstanceInfo infoFromRegistry;
             CurrentRequestVersion.set(Version.V2);
             switch (action) {
-                case Cancel:
+                case Cancel:  // 服务下架
                     node.cancel(appName, id);
                     break;
-                case Heartbeat:
+                case Heartbeat:  // 心跳连接
                     InstanceStatus overriddenStatus = overriddenInstanceStatusMap.get(id);
                     infoFromRegistry = getInstanceByAppAndId(appName, id, false);
                     node.heartbeat(appName, id, infoFromRegistry, overriddenStatus, false);
                     break;
-                case Register:
+                case Register: // 服务注册
                     node.register(info);
                     break;
-                case StatusUpdate:
+                case StatusUpdate: // 状态更新
                     infoFromRegistry = getInstanceByAppAndId(appName, id, false);
                     node.statusUpdate(appName, id, newStatus, infoFromRegistry);
                     break;

@@ -31,6 +31,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Abstract class for the common functionality of a VIP/SVIP resource.
  *
+ * VIP服务器
+ *
+ *
  * @author Nitesh Kant (nkant@netflix.com)
  */
 abstract class AbstractVIPResource {
@@ -68,6 +71,9 @@ abstract class AbstractVIPResource {
                 eurekaAccept
         );
 
+        /**
+         * 获取缓存
+         */
         String payLoad = responseCache.get(cacheKey);
         CurrentRequestVersion.remove();
 

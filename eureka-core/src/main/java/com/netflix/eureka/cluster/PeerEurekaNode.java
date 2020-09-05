@@ -130,6 +130,10 @@ public class PeerEurekaNode {
      *            the instance information {@link InstanceInfo} of any instance
      *            that is send to this instance.
      * @throws Exception
+     *
+     * 使用Task 发送同步注册请求
+     *
+     *
      */
     public void register(final InstanceInfo info) throws Exception {
         long expiryTime = System.currentTimeMillis() + getLeaseRenewalOf(info);
@@ -190,6 +194,10 @@ public class PeerEurekaNode {
      * @param overriddenStatus
      *            the overridden status information if any of the instance.
      * @throws Throwable
+     *
+     * 使用Task 发送心跳检测请求
+     *
+     *
      */
     public void heartbeat(final String appName, final String id,
                           final InstanceInfo info, final InstanceStatus overriddenStatus,

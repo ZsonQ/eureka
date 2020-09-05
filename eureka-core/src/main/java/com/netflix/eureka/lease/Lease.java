@@ -32,18 +32,30 @@ import com.netflix.eureka.registry.AbstractInstanceRegistry;
  */
 public class Lease<T> {
 
+    // 操作类型
     enum Action {
         Register, Cancel, Renew
     };
 
+    // 服务过期时间 90s
     public static final int DEFAULT_DURATION_IN_SECS = 90;
 
     private T holder;
+
+    //服务剔除-下架的时间
     private long evictionTimestamp;
+
+    //服务注册时间
     private long registrationTimestamp;
+
+    //恢复正常工作状态的时间
     private long serviceUpTimestamp;
+
     // Make it volatile so that the expiration task would see this quicker
+    // 上次操作-续约的时间
     private volatile long lastUpdateTimestamp;
+
+    // 过期时间
     private long duration;
 
     public Lease(T r, int durationInSecs) {
@@ -58,14 +70,22 @@ public class Lease<T> {
      * Renew the lease, use renewal duration if it was specified by the
      * associated {@link T} during registration, otherwise default duration is
      * {@link #DEFAULT_DURATION_IN_SECS}.
+     *
+     * 心跳续约
+     *
      */
     public void renew() {
+
+        // 心跳续约时间 = 当前时间 + 过期时间
         lastUpdateTimestamp = System.currentTimeMillis() + duration;
 
     }
 
     /**
      * Cancels the lease by updating the eviction time.
+     *
+     * 通过更新过期时间取消租约。
+     *
      */
     public void cancel() {
         if (evictionTimestamp <= 0) {

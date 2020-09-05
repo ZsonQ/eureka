@@ -34,6 +34,9 @@ public interface PeerAwareInstanceRegistry extends InstanceRegistry {
      * Populates the registry information from a peer eureka node. This
      * operation fails over to other nodes until the list is exhausted if the
      * communication fails.
+     *
+     * 启动全量拉取同步服务注册信息
+     *
      */
     int syncUp();
 
@@ -49,7 +52,18 @@ public interface PeerAwareInstanceRegistry extends InstanceRegistry {
      */
      boolean shouldAllowAccess(boolean remoteRegionRequired);
 
+    /**
+     * 服务注册
+     * @param info
+     * @param isReplication
+     */
      void register(InstanceInfo info, boolean isReplication);
 
+    /**
+     * 修改服务状态
+     * @param asgName
+     * @param newStatus
+     * @param isReplication
+     */
      void statusUpdate(final String asgName, final ASGResource.ASGStatus newStatus, final boolean isReplication);
 }

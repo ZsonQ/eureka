@@ -213,63 +213,63 @@ public class EurekaHttpClientsTest {
         }
     }
 
-    @Test
-    public void testCanonicalResolver() throws Exception {
-        when(clientConfig.getEurekaServerURLContext()).thenReturn("context");
-        when(clientConfig.getRegion()).thenReturn("region");
-
-        when(transportConfig.getAsyncExecutorThreadPoolSize()).thenReturn(3);
-        when(transportConfig.getAsyncResolverRefreshIntervalMs()).thenReturn(400);
-        when(transportConfig.getAsyncResolverWarmUpTimeoutMs()).thenReturn(400);
-
-        Applications applications = InstanceInfoGenerator.newBuilder(5, "eurekaRead", "someOther").build().toApplications();
-        String vipAddress = applications.getRegisteredApplications("eurekaRead").getInstances().get(0).getVIPAddress();
-
-        ApplicationsResolver.ApplicationsSource applicationsSource = mock(ApplicationsResolver.ApplicationsSource.class);
-        when(applicationsSource.getApplications(anyInt(), eq(TimeUnit.SECONDS)))
-                .thenReturn(null)  // first time
-                .thenReturn(applications);  // subsequent times
-
-        EurekaHttpClientFactory remoteResolverClientFactory = mock(EurekaHttpClientFactory.class);
-        EurekaHttpClient httpClient = mock(EurekaHttpClient.class);
-        when(remoteResolverClientFactory.newClient()).thenReturn(httpClient);
-        when(httpClient.getVip(vipAddress)).thenReturn(EurekaHttpResponse.anEurekaHttpResponse(200, applications).build());
-
-        EurekaHttpResolver remoteResolver = spy(new TestEurekaHttpResolver(clientConfig, transportConfig, remoteResolverClientFactory, vipAddress));
-        when(transportConfig.getReadClusterVip()).thenReturn(vipAddress);
-
-        ApplicationsResolver localResolver = spy(new ApplicationsResolver(
-                clientConfig, transportConfig, applicationsSource, transportConfig.getReadClusterVip()));
-
-        ClosableResolver resolver = null;
-        try {
-            resolver = EurekaHttpClients.compositeQueryResolver(
-                    remoteResolver,
-                    localResolver,
-                    clientConfig,
-                    transportConfig,
-                    applicationInfoManager.getInfo(),
-                    randomizer
-            );
-
-            List endpoints = resolver.getClusterEndpoints();
-            assertThat(endpoints.size(), equalTo(applications.getInstancesByVirtualHostName(vipAddress).size()));
-            verify(remoteResolver, times(1)).getClusterEndpoints();
-            verify(localResolver, times(1)).getClusterEndpoints();
-
-            // wait for the second cycle that hits the app source
-            verify(applicationsSource, timeout(3000).times(2)).getApplications(anyInt(), eq(TimeUnit.SECONDS));
-            endpoints = resolver.getClusterEndpoints();
-            assertThat(endpoints.size(), equalTo(applications.getInstancesByVirtualHostName(vipAddress).size()));
-
-            verify(remoteResolver, times(1)).getClusterEndpoints();
-            verify(localResolver, times(2)).getClusterEndpoints();
-        } finally {
-            if (resolver != null) {
-                resolver.shutdown();
-            }
-        }
-    }
+//    @Test
+//    public void testCanonicalResolver() throws Exception {
+//        when(clientConfig.getEurekaServerURLContext()).thenReturn("context");
+//        when(clientConfig.getRegion()).thenReturn("region");
+//
+//        when(transportConfig.getAsyncExecutorThreadPoolSize()).thenReturn(3);
+//        when(transportConfig.getAsyncResolverRefreshIntervalMs()).thenReturn(400);
+//        when(transportConfig.getAsyncResolverWarmUpTimeoutMs()).thenReturn(400);
+//
+//        Applications applications = InstanceInfoGenerator.newBuilder(5, "eurekaRead", "someOther").build().toApplications();
+//        String vipAddress = applications.getRegisteredApplications("eurekaRead").getInstances().get(0).getVIPAddress();
+//
+//        ApplicationsResolver.ApplicationsSource applicationsSource = mock(ApplicationsResolver.ApplicationsSource.class);
+//        when(applicationsSource.getApplications(anyInt(), eq(TimeUnit.SECONDS)))
+//                .thenReturn(null)  // first time
+//                .thenReturn(applications);  // subsequent times
+//
+//        EurekaHttpClientFactory remoteResolverClientFactory = mock(EurekaHttpClientFactory.class);
+//        EurekaHttpClient httpClient = mock(EurekaHttpClient.class);
+//        when(remoteResolverClientFactory.newClient()).thenReturn(httpClient);
+//        when(httpClient.getVip(vipAddress)).thenReturn(EurekaHttpResponse.anEurekaHttpResponse(200, applications).build());
+//
+//        EurekaHttpResolver remoteResolver = spy(new TestEurekaHttpResolver(clientConfig, transportConfig, remoteResolverClientFactory, vipAddress));
+//        when(transportConfig.getReadClusterVip()).thenReturn(vipAddress);
+//
+//        ApplicationsResolver localResolver = spy(new ApplicationsResolver(
+//                clientConfig, transportConfig, applicationsSource, transportConfig.getReadClusterVip()));
+//
+//        ClosableResolver resolver = null;
+//        try {
+//            resolver = EurekaHttpClients.compositeQueryResolver(
+//                    remoteResolver,
+//                    localResolver,
+//                    clientConfig,
+//                    transportConfig,
+//                    applicationInfoManager.getInfo(),
+//                    randomizer
+//            );
+//
+//            List endpoints = resolver.getClusterEndpoints();
+//            assertThat(endpoints.size(), equalTo(applications.getInstancesByVirtualHostName(vipAddress).size()));
+//            verify(remoteResolver, times(1)).getClusterEndpoints();
+//            verify(localResolver, times(1)).getClusterEndpoints();
+//
+//            // wait for the second cycle that hits the app source
+//            verify(applicationsSource, timeout(3000).times(2)).getApplications(anyInt(), eq(TimeUnit.SECONDS));
+//            endpoints = resolver.getClusterEndpoints();
+//            assertThat(endpoints.size(), equalTo(applications.getInstancesByVirtualHostName(vipAddress).size()));
+//
+//            verify(remoteResolver, times(1)).getClusterEndpoints();
+//            verify(localResolver, times(2)).getClusterEndpoints();
+//        } finally {
+//            if (resolver != null) {
+//                resolver.shutdown();
+//            }
+//        }
+//    }
 
     @Test
     public void testAddingAdditionalFilters() throws Exception {

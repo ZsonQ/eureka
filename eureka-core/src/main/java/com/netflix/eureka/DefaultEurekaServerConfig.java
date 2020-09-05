@@ -296,6 +296,13 @@ public class DefaultEurekaServerConfig implements EurekaServerConfig {
                 namespace + "peerNodeConnectionIdleTimeoutSeconds", 30).get();
     }
 
+    /**
+     * 最近改变的服务队列  默认180s  3分钟
+     *
+     * 用来增量拉取
+     *
+     * @return
+     */
     @Override
     public long getRetentionTimeInMSInDeltaQueue() {
         return configInstance.getLongProperty(

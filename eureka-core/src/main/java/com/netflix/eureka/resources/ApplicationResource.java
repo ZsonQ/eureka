@@ -48,6 +48,12 @@ import org.slf4j.LoggerFactory;
  *
  * @author Karthik Ranganathan, Greg Kim
  *
+ * Rersey框架相当于SpringMVC框架
+ * Resource相当于Controller
+ *
+ * ApplicationResource:
+ *      服务注册
+ *
  */
 @Produces({"application/xml", "application/json"})
 public class ApplicationResource {
@@ -81,6 +87,9 @@ public class ApplicationResource {
      *            JSON or XML data.
      * @return the response containing information about a particular
      *         application.
+     *
+     * 获取有关特定对象的信息
+     *
      */
     @GET
     public Response getApplication(@PathParam("version") String version,
@@ -98,6 +107,9 @@ public class ApplicationResource {
             keyType = Key.KeyType.XML;
         }
 
+        /**
+         * 创建缓存key
+         */
         Key cacheKey = new Key(
                 Key.EntityType.Application,
                 appName,
@@ -106,6 +118,16 @@ public class ApplicationResource {
                 EurekaAccept.fromString(eurekaAccept)
         );
 
+        /**
+         * 获取缓存
+         *
+         * 先从只读缓存中获取，如果找不到
+         * 再从读写缓存中获取，如果找不到
+         * 直接从本地缓存中获取-拿出真实数据，并添加到读写缓冲中
+         *
+         * 读写缓存定时180s 删除过期key
+         * 只读缓存默认30s 更新缓存 从读写缓存中获取数据
+         */
         String payLoad = responseCache.get(cacheKey);
         CurrentRequestVersion.remove();
 
@@ -124,6 +146,9 @@ public class ApplicationResource {
      * @param id
      *            the unique identifier of the instance.
      * @return information about a particular instance.
+     *
+     * 获取指定实例信息
+     *
      */
     @Path("{id}")
     public InstanceResource getInstanceInfo(@PathParam("id") String id) {
@@ -134,11 +159,14 @@ public class ApplicationResource {
      * Registers information about a particular instance for an
      * {@link com.netflix.discovery.shared.Application}.
      *
-     * @param info
+     * @param info ： 服务实例信息
      *            {@link InstanceInfo} information of the instance.
-     * @param isReplication
+     * @param isReplication： true:集群注册  false:客户端注册成
      *            a header parameter containing information whether this is
      *            replicated from other nodes.
+     *
+     *  服务注册和集群同步注册接口
+     *
      */
     @POST
     @Consumes({"application/json", "application/xml"})
@@ -146,6 +174,7 @@ public class ApplicationResource {
                                 @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication) {
         logger.debug("Registering instance {} (replication={})", info.getId(), isReplication);
         // validate that the instanceinfo contains all the necessary required fields
+        // 检验实例信息
         if (isBlank(info.getId())) {
             return Response.status(400).entity("Missing instanceId").build();
         } else if (isBlank(info.getHostName())) {
@@ -163,6 +192,7 @@ public class ApplicationResource {
         }
 
         // handle cases where clients may be registering with bad DataCenterInfo with missing data
+        // 处理客户端可能注册了错误的DataCenterInfo并丢失数据的情况
         DataCenterInfo dataCenterInfo = info.getDataCenterInfo();
         if (dataCenterInfo instanceof UniqueIdentifier) {
             String dataCenterInfoId = ((UniqueIdentifier) dataCenterInfo).getId();
@@ -183,6 +213,7 @@ public class ApplicationResource {
             }
         }
 
+        //开始注册服务实例
         registry.register(info, "true".equals(isReplication));
         return Response.status(204).build();  // 204 to be backwards compatible
     }

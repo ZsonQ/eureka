@@ -50,6 +50,10 @@ import com.netflix.eureka.util.EurekaMonitors;
  *
  * @author Karthik Ranganathan, Greg Kim
  *
+ *
+ * 服务发现-缓存刷新
+ * 全量拉取和增量拉取
+ *
  */
 @Path("/{version}/apps")
 @Produces({"application/xml", "application/json"})
@@ -112,6 +116,12 @@ public class ApplicationsResource {
      *
      * @return a response containing information about all {@link com.netflix.discovery.shared.Applications}
      *         from the {@link AbstractInstanceRegistry}.
+     *
+     * 服务发现
+     *
+     * 增量拉取和全量拉取
+     *
+     *
      */
     @GET
     public Response getContainers(@PathParam("version") String version,
@@ -121,6 +131,7 @@ public class ApplicationsResource {
                                   @Context UriInfo uriInfo,
                                   @Nullable @QueryParam("regions") String regionsStr) {
 
+        //云服务器逻辑
         boolean isRemoteRegionRequested = null != regionsStr && !regionsStr.isEmpty();
         String[] regions = null;
         if (!isRemoteRegionRequested) {
@@ -145,8 +156,9 @@ public class ApplicationsResource {
             returnMediaType = MediaType.APPLICATION_XML;
         }
 
+        //创建缓存key
         Key cacheKey = new Key(Key.EntityType.Application,
-                ResponseCacheImpl.ALL_APPS,
+                ResponseCacheImpl.ALL_APPS,  //指定全量拉取还是增量拉取
                 keyType, CurrentRequestVersion.get(), EurekaAccept.fromString(eurekaAccept), regions
         );
 

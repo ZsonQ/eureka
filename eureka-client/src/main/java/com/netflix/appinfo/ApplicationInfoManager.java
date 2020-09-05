@@ -132,6 +132,9 @@ public class ApplicationInfoManager {
      * Gets the information about this instance that is registered with eureka.
      *
      * @return information about this instance that is registered with eureka.
+     *
+     * 获取已在eureka注册的此实例的相关信息。
+     *
      */
     public InstanceInfo getInfo() {
         return instanceInfo;

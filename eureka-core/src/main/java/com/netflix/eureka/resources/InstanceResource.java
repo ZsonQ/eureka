@@ -48,6 +48,11 @@ import org.slf4j.LoggerFactory;
  *
  * @author Karthik Ranganathan, Greg Kim
  *
+ * Rersey框架相当于SpringMVC框架
+ * Resource相当于Controller
+ *
+ * InstanceResource:
+ *      服务下架，服务剔除，服务发现，心态连接
  */
 @Produces({"application/xml", "application/json"})
 public class InstanceResource {
@@ -58,7 +63,6 @@ public class InstanceResource {
     private final EurekaServerConfig serverConfig;
     private final String id;
     private final ApplicationResource app;
-
 
     InstanceResource(ApplicationResource app, String id, EurekaServerConfig serverConfig, PeerAwareInstanceRegistry registry) {
         this.app = app;
@@ -73,9 +77,13 @@ public class InstanceResource {
      *
      * @return response containing information about the the instance's
      *         {@link InstanceInfo}.
+     *
+     *   获取服务实例信息
+     *
      */
     @GET
     public Response getInstanceInfo() {
+        // 从本地缓存根据实例id获取
         InstanceInfo appInfo = registry
                 .getInstanceByAppAndId(app.getName(), id);
         if (appInfo != null) {
@@ -101,6 +109,12 @@ public class InstanceResource {
      *            last timestamp when this instance information was updated.
      * @return response indicating whether the operation was a success or
      *         failure.
+     *
+     *  服务心跳续约
+     *
+     *  默认每30s 一次心跳
+     *  需要集群同步操作
+     *
      */
     @PUT
     public Response renewLease(
@@ -108,16 +122,21 @@ public class InstanceResource {
             @QueryParam("overriddenstatus") String overriddenStatus,
             @QueryParam("status") String status,
             @QueryParam("lastDirtyTimestamp") String lastDirtyTimestamp) {
+        // 是否来自集群同步的请求
         boolean isFromReplicaNode = "true".equals(isReplication);
+        // 心跳续约
         boolean isSuccess = registry.renew(app.getName(), id, isFromReplicaNode);
 
         // Not found in the registry, immediately ask for a register
+        // 心跳续约没有成功重新尝试注册
         if (!isSuccess) {
             logger.warn("Not Found (Renew): {} - {}", app.getName(), id);
             return Response.status(Status.NOT_FOUND).build();
         }
         // Check if we need to sync based on dirty time stamp, the client
         // instance might have changed some value
+        // 检查是否需要同步基于脏时间戳，客户端
+        // 实例可能更改了一些值
         Response response;
         if (lastDirtyTimestamp != null && serverConfig.shouldSyncWhenTimestampDiffers()) {
             response = this.validateDirtyTimestamp(Long.valueOf(lastDirtyTimestamp), isFromReplicaNode);
@@ -154,6 +173,9 @@ public class InstanceResource {
      *            last timestamp when this instance information was updated.
      * @return response indicating whether the operation was a success or
      *         failure.
+     *
+     *  维护服务实例的状态
+     *
      */
     @PUT
     @Path("status")
@@ -273,11 +295,17 @@ public class InstanceResource {
      *            replicated from other nodes.
      * @return response indicating whether the operation was a success or
      *         failure.
+     *
+     *  服务下架-删除
+     *
+     *  客户端主动发送下架请求
+     *  需要集群同步操作
      */
     @DELETE
     public Response cancelLease(
             @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication) {
         try {
+            // 服务下架
             boolean isSuccess = registry.cancel(app.getName(), id,
                 "true".equals(isReplication));
 

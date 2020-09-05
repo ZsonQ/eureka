@@ -60,6 +60,8 @@ public interface EurekaClientConfig {
      * the eureka server.
      *
      * @return the fetch interval in seconds.
+     *
+     * 默认30s  服务发现和缓存刷新
      */
     int getRegistryFetchIntervalSeconds();
 
@@ -281,6 +283,10 @@ public interface EurekaClientConfig {
      *
      * @return true if this instance should register with eureka, false
      *         otherwise
+     *
+     * 表示该实例是否应该注册其信息
+     * 使用eureka服务器供他人发现。
+     *
      */
     boolean shouldRegisterWithEureka();
 
@@ -453,6 +459,9 @@ public interface EurekaClientConfig {
      * Indicates whether this client should fetch eureka registry information from eureka server.
      *
      * @return {@code true} if registry information has to be fetched, {@code false} otherwise.
+     *
+     * 指示此客户端是否应从eureka服务器获取eureka注册表信息。
+     *
      */
     boolean shouldFetchRegistry();
 

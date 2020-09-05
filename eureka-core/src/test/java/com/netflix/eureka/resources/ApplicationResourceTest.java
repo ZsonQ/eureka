@@ -25,9 +25,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
-/**
- * @author David Liu
- */
 public class ApplicationResourceTest extends AbstractTester {
     private ApplicationResource applicationResource;
     private Application testApplication;

@@ -43,6 +43,7 @@ import static org.mockito.Mockito.when;
  * which is essential to verifying content encoding/decoding with different format types (JSON vs XML, compressed vs
  * uncompressed).
  *
+ *
  * @author Tomasz Bak
  */
 public class EurekaClientServerRestIntegrationTest {
@@ -114,6 +115,7 @@ public class EurekaClientServerRestIntegrationTest {
         assertThat(httpResponse.getStatusCode(), is(equalTo(204)));
     }
 
+
     @Test
     public void testHeartbeat() throws Exception {
         // Register first
@@ -136,7 +138,6 @@ public class EurekaClientServerRestIntegrationTest {
 
         assertThat(heartBeatResponse.getStatusCode(), is(equalTo(404)));
     }
-
     @Test
     public void testCancelForEntryThatExists() throws Exception {
         // Register first
@@ -206,9 +207,6 @@ public class EurekaClientServerRestIntegrationTest {
         return queryResponse.getEntity();
     }
 
-    /**
-     * This will be read by server internal discovery client. We need to salience it.
-     */
     private static void injectEurekaConfiguration() throws UnknownHostException {
         String myHostName = InetAddress.getLocalHost().getHostName();
         String myServiceUrl = "http://" + myHostName + ":8080/v2/";
@@ -236,10 +234,17 @@ public class EurekaClientServerRestIntegrationTest {
 
         server = new Server(8080);
 
-        WebAppContext webapp = new WebAppContext();
-        webapp.setContextPath("/");
-        webapp.setWar(warFile.getAbsolutePath());
-        server.setHandler(webapp);
+//        WebAppContext webapp = new WebAppContext();
+//        webapp.setContextPath("/");
+//        webapp.setWar(warFile.getAbsolutePath());
+//        server.setHandler(webapp);
+
+
+        WebAppContext webAppCtx = new WebAppContext(new File("./eureka-server/src/main/webapp").getAbsolutePath(), "/");
+        webAppCtx.setDescriptor(new File("./eureka-server/src/main/webapp/WEB-INF/web.xml").getAbsolutePath());
+        webAppCtx.setResourceBase(new File("./eureka-server/src/main/resources").getAbsolutePath());
+        webAppCtx.setClassLoader(Thread.currentThread().getContextClassLoader());
+        server.setHandler(webAppCtx);
 
         server.start();
 
